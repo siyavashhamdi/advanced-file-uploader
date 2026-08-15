@@ -1,7 +1,7 @@
 {
-  "name": "advanced-uploader",
+  "name": "advanced-file-uploader",
   "version": "1.0.0",
-  "description": "Sequential multi-file uploader with per-file progress",
+  "description": "Advanced file uploader with parallel chunked uploads and per-file progress",
   "private": true,
   "type": "module",
   "scripts": {

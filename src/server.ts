@@ -379,7 +379,7 @@ app.use(
 );
 
 const server = app.listen(PORT, () => {
-  log(`[boot] Uploader http://localhost:${PORT}`);
+  log(`[boot] advanced-file-uploader http://localhost:${PORT}`);
   log(`[boot] Max file size ${MAX_FILE_SIZE_LABEL}`);
   log(
     `[boot] Chunked parallel upload enabled (max chunk ${MAX_CHUNK_SIZE / (1024 * 1024)} MB)`,

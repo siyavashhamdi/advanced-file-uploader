@@ -1,6 +1,6 @@
-# advanced-uploader
+# advanced-file-uploader
 
-Sequential multi-file uploader with per-file progress. Express + Multer backend and a static web UI that uploads one file at a time so XHR progress stays accurate.
+Advanced file uploader with parallel chunked uploads, per-file progress, and optional simultaneous multi-file transfer. Express + Multer backend with a static web UI.
 
 ## Requirements
 
@@ -48,7 +48,7 @@ cp .env.example .env   # once
 npm run deploy
 ```
 
-`.env` drives `PORT`, `NODE_ENV`, and `APP_ENV` (`production` → PM2 `advanced-uploader`, `staging` → `staging-advanced-uploader`). Deploy builds into `dist.next`, then promotes to `dist/` before restart.
+`.env` drives `PORT`, `NODE_ENV`, and `APP_ENV` (`production` → PM2 `advanced-file-uploader`, `staging` → `staging-advanced-file-uploader`). Deploy builds into `dist.next`, then promotes to `dist/` before restart.
 
 ## API
 

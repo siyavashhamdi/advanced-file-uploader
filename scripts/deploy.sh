@@ -9,8 +9,8 @@ usage() {
   echo
   echo "Builds TypeScript into a staging dir, promotes to dist/, then restarts PM2."
   echo "Environment is read from .env (APP_ENV, NODE_ENV, PORT) when present."
-  echo "  APP_ENV=production  -> PM2 advanced-uploader"
-  echo "  APP_ENV=staging     -> PM2 staging-advanced-uploader"
+  echo "  APP_ENV=production  -> PM2 advanced-file-uploader"
+  echo "  APP_ENV=staging     -> PM2 staging-advanced-file-uploader"
   exit 1
 }
 
@@ -66,9 +66,9 @@ case "$APP_ENV" in
 esac
 
 if [[ "$APP_ENV" == "staging" ]]; then
-  PM2_NAME="staging-advanced-uploader"
+  PM2_NAME="staging-advanced-file-uploader"
 else
-  PM2_NAME="advanced-uploader"
+  PM2_NAME="advanced-file-uploader"
 fi
 
 promote_staging_build() {

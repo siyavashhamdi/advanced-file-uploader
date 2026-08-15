@@ -37,7 +37,7 @@ module.exports = (() => {
     .toLowerCase();
 
   const processName =
-    appEnvName === "staging" ? "staging-advanced-uploader" : "advanced-uploader";
+    appEnvName === "staging" ? "staging-advanced-file-uploader" : "advanced-file-uploader";
 
   const port = String(fileEnv.PORT || process.env.PORT || "3000");
   const nodeEnv = String(fileEnv.NODE_ENV || "production");
