@@ -155,6 +155,7 @@ function paintMetrics() {
   if (!isUploading) return;
 
   queue.forEach((entry, index) => {
+    // Don't overwrite Assembling… / Done / etc.
     if (entry.state !== "uploading") return;
 
     if (!entry.rate) entry.rate = new RateTracker();
@@ -270,7 +271,10 @@ function syncCancelButtons() {
     const item = fileList.querySelector(`[data-index="${index}"]`);
     if (!item) return;
     const btn = item.querySelector(".btn-cancel");
-    const canCancel = entry.state === "pending" || entry.state === "uploading";
+    const canCancel =
+      entry.state === "pending" ||
+      entry.state === "uploading" ||
+      entry.state === "assembling";
     btn.hidden = !canCancel;
     btn.disabled = !canCancel;
   });
@@ -380,7 +384,7 @@ function refreshOverall() {
     if (entry.state === "cancelled" || entry.state === "error") continue;
     const entryTotal = entry.total || entry.file.size;
     total += entryTotal;
-    if (entry.state === "done") {
+    if (entry.state === "done" || entry.state === "assembling") {
       loaded += entryTotal;
       continue;
     }
@@ -399,7 +403,12 @@ function refreshOverall() {
 
   let remainBytes = 0;
   for (const entry of queue) {
-    if (entry.state === "done" || entry.state === "cancelled" || entry.state === "error") {
+    if (
+      entry.state === "done" ||
+      entry.state === "assembling" ||
+      entry.state === "cancelled" ||
+      entry.state === "error"
+    ) {
       continue;
     }
     const entryTotal = entry.total || entry.file.size;
@@ -615,8 +624,16 @@ async function uploadOne(index) {
       throw Object.assign(new Error("Cancelled"), { cancelled: true });
     }
 
-    updateItem(index, "uploading", "Assembling…");
+    // Distinct state so the 1s metrics ticker does not overwrite this with 100%
+    entry.state = "assembling";
+    entry.loaded = file.size;
+    entry.speed = 0;
+    setProgress(index, 100);
     clearLiveStats(index);
+    updateItem(index, "assembling", "Assembling…");
+    setStatus(`Assembling on server: ${file.name}`);
+    refreshOverall();
+
     await xhrJson("POST", "/api/upload/complete", { uploadId }, index);
 
     entry.state = "done";
