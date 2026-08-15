@@ -253,6 +253,55 @@ body {
   white-space: nowrap;
 }
 
+.eta {
+  font-size: 12px;
+  color: var(--muted);
+  font-family: "JetBrains Mono", monospace;
+  white-space: nowrap;
+}
+
+.overall {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(110, 168, 255, 0.06);
+}
+
+.overall-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  margin-bottom: 8px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 13px;
+}
+
+.overall-label {
+  font-family: "DM Sans", system-ui, sans-serif;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.overall-pct {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.overall-speed {
+  color: var(--accent);
+}
+
+.overall-eta {
+  color: var(--muted);
+  margin-left: auto;
+}
+
+.overall-progress {
+  margin-top: 0;
+}
+
 .status-pill {
   font-size: 12px;
   padding: 4px 8px;
@@ -274,6 +323,33 @@ body {
   color: var(--error);
   border-color: rgba(248, 113, 113, 0.25);
   background: rgba(248, 113, 113, 0.08);
+}
+
+.status-pill.cancelled {
+  color: #fbbf24;
+  border-color: rgba(251, 191, 36, 0.25);
+  background: rgba(251, 191, 36, 0.08);
+}
+
+.btn-cancel {
+  margin-top: 0;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--error);
+  background: transparent;
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.btn-cancel:hover:not(:disabled) {
+  background: rgba(248, 113, 113, 0.1);
+}
+
+.btn-cancel:disabled,
+.btn-cancel[hidden] {
+  display: none;
 }
 
 .progress {

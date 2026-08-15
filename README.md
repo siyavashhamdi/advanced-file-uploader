@@ -31,6 +31,8 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000). Uploaded files are stored in `uploads/` (created automatically). Max size is **10 GB** per file.
 
+> **Network error after ~100s:** If the hostname is Cloudflare **proxied (orange cloud)**, Cloudflare cuts long uploads around 100 seconds. Set the record to **DNS only (grey cloud)**, or use a direct/non-proxied host. Nginx/app timeouts alone cannot fix that.
+
 Override the port with `PORT`:
 
 ```bash
@@ -51,4 +53,9 @@ npm run deploy
 ## API
 
 - `GET /api/health` — health check
-- `POST /api/upload` — multipart field `file` (single file)
+- `POST /api/upload/init` — start chunked upload `{ originalName, size, chunkSize, totalChunks }`
+- `POST /api/upload/chunk` — multipart `uploadId`, `index`, `chunk`
+- `POST /api/upload/complete` — assemble `{ uploadId }`
+- `POST /api/upload/abort` — delete temp parts `{ uploadId }`
+
+Each file is split into **8 MB** chunks and up to **4** chunks upload in parallel.
