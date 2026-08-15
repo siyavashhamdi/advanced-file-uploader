@@ -1,0 +1,12 @@
+---
+description: Endless feedback popup via osascript; never store
+alwaysApply: true
+---
+
+# Feedback popup
+
+After every reply: `osascript .cursor/scripts/feedback-popup.applescript` (`all` perms). No Python.
+
+- Skip/empty → stop cycle
+- Task → do it, then popup again
+- Feedback → brief confirm, then popup again
