@@ -106,6 +106,8 @@ echo "Deploy APP_ENV=${APP_ENV} NODE_ENV=${NODE_ENV_VALUE} port=${PORT}"
 echo "Installing dependencies..."
 npm ci
 
+mkdir -p logs
+
 echo "Building into staging directory (heap limit: ${BUILD_HEAP_MB}MB)..."
 rm -rf "${STAGING_DIR}"
 export NODE_OPTIONS="--max-old-space-size=${BUILD_HEAP_MB}"

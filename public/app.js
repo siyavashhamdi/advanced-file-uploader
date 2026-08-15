@@ -18,6 +18,14 @@ const overallBarEl = document.getElementById("overall-bar");
 const CHUNK_SIZE = 8 * 1024 * 1024;
 /** Parallel HTTP requests per file. */
 const CHUNK_CONCURRENCY = 4;
+/** How often UI % / speed / ETA refresh. */
+const UI_TICK_MS = 1000;
+/** Rolling window for speed (same idea as browsers / download managers). */
+const SPEED_WINDOW_MS = 10_000;
+/** Min window before showing speed/ETA. */
+const SPEED_MIN_MS = 2_000;
+/** EMA factor for displayed ETA (lower = calmer). */
+const ETA_SMOOTH = 0.2;
 
 /**
  * @typedef {{
@@ -27,6 +35,8 @@ const CHUNK_CONCURRENCY = 4;
  *   total: number,
  *   speed: number,
  *   uploadId: string | null,
+ *   rate: RateTracker | null,
+ *   etaSmooth: number | null,
  * }} QueueEntry
  */
 
@@ -37,6 +47,54 @@ let isUploading = false;
 const activeXhrs = new Map();
 let cancelAllRequested = false;
 let simultaneousMode = false;
+/** @type {ReturnType<typeof setInterval> | null} */
+let metricsTimer = null;
+
+/** Rolling-window throughput tracker (stable ETA source). */
+class RateTracker {
+  constructor() {
+    /** @type {{ t: number, bytes: number }[]} */
+    this.samples = [];
+  }
+
+  reset() {
+    this.samples = [];
+  }
+
+  push(bytes, t = performance.now()) {
+    this.samples.push({ t, bytes: Math.max(0, bytes) });
+    const cutoff = t - SPEED_WINDOW_MS;
+    while (this.samples.length > 2 && this.samples[0].t < cutoff) {
+      this.samples.shift();
+    }
+  }
+
+  /** Bytes/sec over the retained window, or 0 if not enough data. */
+  speedBps() {
+    if (this.samples.length < 2) return 0;
+    const first = this.samples[0];
+    const last = this.samples[this.samples.length - 1];
+    const dtMs = last.t - first.t;
+    if (dtMs < SPEED_MIN_MS) return 0;
+    const delta = last.bytes - first.bytes;
+    if (delta <= 0) return 0;
+    return (delta / dtMs) * 1000;
+  }
+}
+
+function smoothEta(entry, rawEta) {
+  if (!Number.isFinite(rawEta) || rawEta < 0) return entry.etaSmooth;
+  if (entry.etaSmooth == null) {
+    entry.etaSmooth = rawEta;
+    return rawEta;
+  }
+  // Calm jumps: blend toward new estimate; also clamp huge spikes
+  const blended = entry.etaSmooth * (1 - ETA_SMOOTH) + rawEta * ETA_SMOOTH;
+  const maxJump = Math.max(30, entry.etaSmooth * 1.35);
+  const minJump = entry.etaSmooth * 0.65;
+  entry.etaSmooth = Math.min(maxJump, Math.max(minJump, blended));
+  return entry.etaSmooth;
+}
 
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
@@ -73,7 +131,56 @@ function setUploadingUi(uploading) {
   simultaneousEl.disabled = uploading;
   cancelAllBtn.hidden = !uploading;
   cancelAllBtn.disabled = !uploading;
-  if (!uploading) overallEl.hidden = true;
+  if (!uploading) {
+    overallEl.hidden = true;
+    stopMetricsTicker();
+  } else {
+    startMetricsTicker();
+  }
+}
+
+function startMetricsTicker() {
+  if (metricsTimer != null) return;
+  metricsTimer = setInterval(paintMetrics, UI_TICK_MS);
+}
+
+function stopMetricsTicker() {
+  if (metricsTimer == null) return;
+  clearInterval(metricsTimer);
+  metricsTimer = null;
+}
+
+/** Paint % / speed / ETA once per second from rolling-window rates. */
+function paintMetrics() {
+  if (!isUploading) return;
+
+  queue.forEach((entry, index) => {
+    if (entry.state !== "uploading") return;
+
+    if (!entry.rate) entry.rate = new RateTracker();
+    entry.rate.push(entry.loaded || 0);
+
+    const speed = entry.rate.speedBps();
+    entry.speed = speed;
+
+    const total = entry.total || entry.file.size;
+    const loaded = Math.min(entry.loaded || 0, total);
+    const pct = total > 0 ? Math.round((loaded / total) * 100) : 0;
+    setProgress(index, pct);
+    updateItem(index, "uploading", `${pct}%`);
+
+    if (speed > 0) {
+      setSpeed(index, speed);
+      const remain = Math.max(0, total - loaded);
+      const rawEta = remain / speed;
+      setEta(index, smoothEta(entry, rawEta));
+    } else {
+      setSpeed(index, 0);
+      setEta(index, NaN);
+    }
+  });
+
+  refreshOverall();
 }
 
 function trackXhr(index, xhr) {
@@ -187,6 +294,8 @@ function addFiles(files) {
       total: file.size,
       speed: 0,
       uploadId: null,
+      rate: null,
+      etaSmooth: null,
     });
   });
 
@@ -241,6 +350,12 @@ function setEta(index, seconds) {
 function clearLiveStats(index) {
   setSpeed(index, 0);
   setEta(index, NaN);
+  const entry = queue[index];
+  if (entry) {
+    entry.speed = 0;
+    entry.etaSmooth = null;
+    if (entry.rate) entry.rate.reset();
+  }
 }
 
 function setProgress(index, percent) {
@@ -443,17 +558,16 @@ async function uploadOne(index) {
   const file = entry.file;
   const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE));
   const chunkLoaded = new Array(totalChunks).fill(0);
-  let startedAt = performance.now();
-  let lastBytes = 0;
-  let lastAt = startedAt;
 
   entry.state = "uploading";
   entry.loaded = 0;
   entry.total = file.size;
   entry.speed = 0;
+  entry.etaSmooth = null;
+  entry.rate = new RateTracker();
   updateItem(index, "uploading", "0%");
-  clearLiveStats(index);
-  refreshOverall();
+  setSpeed(index, 0);
+  setEta(index, NaN);
   console.log(
     "[upload] client start (chunked)",
     file.name,
@@ -461,30 +575,8 @@ async function uploadOne(index) {
     `${totalChunks} chunks × ${CHUNK_CONCURRENCY} parallel`,
   );
 
-  const refreshProgress = () => {
-    const loaded = chunkLoaded.reduce((a, b) => a + b, 0);
-    const now = performance.now();
-    const dt = (now - lastAt) / 1000;
-    let instant = 0;
-    if (dt >= 0.2) {
-      instant = (loaded - lastBytes) / dt;
-      lastBytes = loaded;
-      lastAt = now;
-    }
-    const elapsed = (now - startedAt) / 1000;
-    const average = elapsed > 0 ? loaded / elapsed : 0;
-    const speed = instant > 0 ? instant : average;
-    const remain = Math.max(0, file.size - loaded);
-    const etaSec = speed > 0 ? remain / speed : NaN;
-    const pct = file.size > 0 ? Math.round((loaded / file.size) * 100) : 0;
-
-    entry.loaded = loaded;
-    entry.speed = speed;
-    setProgress(index, pct);
-    updateItem(index, "uploading", `${pct}%`);
-    setSpeed(index, speed);
-    setEta(index, etaSec);
-    refreshOverall();
+  const noteLoaded = () => {
+    entry.loaded = chunkLoaded.reduce((a, b) => a + b, 0);
   };
 
   try {
@@ -513,10 +605,10 @@ async function uploadOne(index) {
 
       await uploadChunkBlob(uploadId, chunkIndex, blob, index, (loaded) => {
         chunkLoaded[chunkIndex] = loaded;
-        refreshProgress();
+        noteLoaded();
       });
       chunkLoaded[chunkIndex] = blob.size;
-      refreshProgress();
+      noteLoaded();
     });
 
     if (cancelAllRequested || entry.state === "cancelled") {
@@ -524,6 +616,7 @@ async function uploadOne(index) {
     }
 
     updateItem(index, "uploading", "Assembling…");
+    clearLiveStats(index);
     await xhrJson("POST", "/api/upload/complete", { uploadId }, index);
 
     entry.state = "done";

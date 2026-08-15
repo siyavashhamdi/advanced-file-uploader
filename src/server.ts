@@ -5,8 +5,6 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { createWriteStream, createReadStream } from "node:fs";
-import { finished } from "node:stream/promises";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -32,12 +30,19 @@ type UploadMeta = {
   createdAt: number;
 };
 
+function log(...parts: unknown[]) {
+  const line = parts
+    .map((p) => (typeof p === "string" ? p : JSON.stringify(p)))
+    .join(" ");
+  console.log(line);
+}
+
 function logError(context: string, err: unknown, extra?: Record<string, unknown>) {
   const base =
     err instanceof Error
       ? { name: err.name, message: err.message, stack: err.stack }
       : { err };
-  console.error(`[upload-error] ${context}`, { ...base, ...extra });
+  console.error(`[upload-error] ${context}`, JSON.stringify({ ...base, ...extra }));
 }
 
 function formatDuration(ms: number): string {
@@ -112,6 +117,20 @@ const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
 app.use(express.json({ limit: "1mb" }));
+
+app.use((req, res, next) => {
+  if (!req.path.startsWith("/api/")) {
+    next();
+    return;
+  }
+  const started = Date.now();
+  log(`[req] ${req.method} ${req.path}`);
+  res.on("finish", () => {
+    log(`[res] ${req.method} ${req.path} -> ${res.statusCode} (${Date.now() - started}ms)`);
+  });
+  next();
+});
+
 app.use(express.static(publicDir));
 
 app.get("/api/health", (_req, res) => {
@@ -169,7 +188,7 @@ app.post("/api/upload/init", async (req, res) => {
     };
     await fsp.writeFile(metaPath(uploadId), JSON.stringify(meta, null, 2));
 
-    console.log("[upload] init", {
+    log("[upload] init", {
       uploadId,
       originalName,
       size,
@@ -227,7 +246,7 @@ app.post("/api/upload/chunk", (req, res) => {
       const dest = chunkPath(uploadId, index);
       await fsp.rename(req.file.path, dest);
 
-      console.log("[upload] chunk ok", {
+      log("[upload] chunk ok", {
         uploadId,
         index,
         bytes: req.file.size,
@@ -254,9 +273,15 @@ app.post("/api/upload/complete", async (req, res) => {
       return;
     }
 
+    // Verify every chunk exists and has the expected byte length
     for (let i = 0; i < meta.totalChunks; i += 1) {
+      const start = i * meta.chunkSize;
+      const end = Math.min(start + meta.chunkSize, meta.size);
+      const expected = end - start;
+      const p = chunkPath(uploadId, i);
+      let st: fs.Stats;
       try {
-        await fsp.access(chunkPath(uploadId, i));
+        st = await fsp.stat(p);
       } catch {
         res.status(400).json({
           ok: false,
@@ -264,42 +289,38 @@ app.post("/api/upload/complete", async (req, res) => {
         });
         return;
       }
+      if (st.size !== expected) {
+        res.status(400).json({
+          ok: false,
+          error: `Chunk ${i} size mismatch (got ${st.size}, expected ${expected})`,
+        });
+        return;
+      }
     }
 
     const storedName = safeBaseName(meta.originalName);
     const finalPath = path.join(uploadsDir, storedName);
-    const out = createWriteStream(finalPath);
 
+    // Sequential read/append avoids pipe races when many files assemble at once
+    const fh = await fsp.open(finalPath, "w");
     try {
-      await new Promise<void>((resolve, reject) => {
-        out.on("error", reject);
-
-        const writeNext = (i: number) => {
-          if (i >= meta.totalChunks) {
-            out.end(() => resolve());
-            return;
-          }
-          const inp = createReadStream(chunkPath(uploadId, i));
-          inp.on("error", reject);
-          inp.on("end", () => writeNext(i + 1));
-          inp.pipe(out, { end: false });
-        };
-
-        writeNext(0);
-      });
-      await finished(out).catch(() => undefined);
+      for (let i = 0; i < meta.totalChunks; i += 1) {
+        const data = await fsp.readFile(chunkPath(uploadId, i));
+        await fh.write(data);
+      }
     } catch (e) {
-      out.destroy();
+      await fh.close().catch(() => undefined);
       await fsp.rm(finalPath, { force: true });
       throw e;
     }
+    await fh.close();
 
     const st = await fsp.stat(finalPath);
     if (st.size !== meta.size) {
       await fsp.rm(finalPath, { force: true });
       res.status(500).json({
         ok: false,
-        error: `Size mismatch (got ${st.size}, expected ${meta.size})`,
+        error: `Assembled size mismatch (got ${st.size}, expected ${meta.size})`,
       });
       return;
     }
@@ -307,7 +328,7 @@ app.post("/api/upload/complete", async (req, res) => {
     await removeUploadDir(uploadId);
 
     const elapsedMs = Date.now() - startedAt;
-    console.log("[upload] complete ok", {
+    log("[upload] complete ok", {
       uploadId,
       originalName: meta.originalName,
       storedName,
@@ -326,7 +347,9 @@ app.post("/api/upload/complete", async (req, res) => {
     });
   } catch (err) {
     logError("complete", err, { uploadId });
-    res.status(500).json({ ok: false, error: "Failed to complete upload" });
+    const message =
+      err instanceof Error ? err.message : "Failed to complete upload";
+    res.status(500).json({ ok: false, error: message });
   }
 });
 
@@ -337,7 +360,7 @@ app.post("/api/upload/abort", async (req, res) => {
     res.status(400).json({ ok: false, error: "uploadId required" });
     return;
   }
-  console.log("[upload] abort", { uploadId });
+  log("[upload] abort", { uploadId });
   await removeUploadDir(uploadId);
   res.json({ ok: true });
 });
@@ -356,10 +379,12 @@ app.use(
 );
 
 const server = app.listen(PORT, () => {
-  console.log(`[boot] Uploader http://localhost:${PORT}`);
-  console.log(`[boot] Max file size ${MAX_FILE_SIZE_LABEL}`);
-  console.log(`[boot] Chunked parallel upload enabled (max chunk ${MAX_CHUNK_SIZE / (1024 * 1024)} MB)`);
-  console.log(`[boot] Node requestTimeout=${REQUEST_TIMEOUT_MS || "disabled"}`);
+  log(`[boot] Uploader http://localhost:${PORT}`);
+  log(`[boot] Max file size ${MAX_FILE_SIZE_LABEL}`);
+  log(
+    `[boot] Chunked parallel upload enabled (max chunk ${MAX_CHUNK_SIZE / (1024 * 1024)} MB)`,
+  );
+  log(`[boot] Node requestTimeout=${REQUEST_TIMEOUT_MS || "disabled"}`);
 });
 
 server.requestTimeout = REQUEST_TIMEOUT_MS;

@@ -49,8 +49,13 @@ module.exports = (() => {
         cwd: ".",
         script: "dist/server.js",
         instances: 1,
+        exec_mode: "fork",
         autorestart: true,
         max_memory_restart: "512M",
+        time: true,
+        merge_logs: true,
+        out_file: path.join(__dirname, "logs", "pm2-out.log"),
+        error_file: path.join(__dirname, "logs", "pm2-error.log"),
         env: {
           NODE_ENV: nodeEnv,
           APP_ENV: appEnvName,
