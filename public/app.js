@@ -5,16 +5,22 @@ const fileList = document.getElementById("file-list");
 const startBtn = document.getElementById("start-btn");
 const clearBtn = document.getElementById("clear-btn");
 const statusEl = document.getElementById("status");
+const simultaneousEl = document.getElementById("simultaneous");
+const browseBtn = document.getElementById("browse-btn");
 
 let queue = [];
 let isUploading = false;
 
 function formatBytes(bytes) {
-  if (bytes === 0) return "0 B";
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
   const k = 1024;
-  const sizes = ["B", "KB", "MB", "GB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  const sizes = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1);
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
+}
+
+function formatSpeed(bytesPerSec) {
+  return `${formatBytes(bytesPerSec)}/s`;
 }
 
 function setStatus(message) {
@@ -47,7 +53,12 @@ function createFileItem(file, index) {
   pill.className = "status-pill";
   pill.textContent = "Pending";
 
+  const speed = document.createElement("span");
+  speed.className = "speed";
+  speed.hidden = true;
+
   fileStatus.appendChild(pill);
+  fileStatus.appendChild(speed);
 
   const progress = document.createElement("div");
   progress.className = "progress";
@@ -59,7 +70,7 @@ function createFileItem(file, index) {
   item.appendChild(fileStatus);
   item.appendChild(progress);
 
-  return { item, pill, bar };
+  return item;
 }
 
 function addFiles(files) {
@@ -76,10 +87,11 @@ function addFiles(files) {
 
   queueSection.hidden = false;
   startBtn.disabled = false;
+  clearBtn.disabled = false;
+  simultaneousEl.disabled = false;
 
   newFiles.forEach((file, i) => {
-    const { item, pill, bar } = createFileItem(file, startIndex + i);
-    fileList.appendChild(item);
+    fileList.appendChild(createFileItem(file, startIndex + i));
   });
 
   setStatus(`${queue.length} file${queue.length > 1 ? "s" : ""} in queue`);
@@ -93,6 +105,23 @@ function updateItem(index, state, text) {
   pill.className = "status-pill" + (state ? ` ${state}` : "");
 }
 
+function setSpeed(index, bytesPerSec) {
+  const item = fileList.querySelector(`[data-index="${index}"]`);
+  if (!item) return;
+  const speed = item.querySelector(".speed");
+  if (!Number.isFinite(bytesPerSec) || bytesPerSec <= 0) {
+    speed.hidden = true;
+    speed.textContent = "";
+    return;
+  }
+  speed.hidden = false;
+  speed.textContent = formatSpeed(bytesPerSec);
+}
+
+function clearSpeed(index) {
+  setSpeed(index, 0);
+}
+
 function setProgress(index, percent) {
   const item = fileList.querySelector(`[data-index="${index}"]`);
   if (!item) return;
@@ -100,51 +129,116 @@ function setProgress(index, percent) {
   bar.style.width = `${Math.max(0, Math.min(100, percent))}%`;
 }
 
-function uploadNext(currentIndex = 0) {
-  if (currentIndex >= queue.length) {
-    isUploading = false;
-    startBtn.disabled = false;
-    clearBtn.disabled = false;
-    setStatus("All uploads completed.");
-    return;
-  }
+function uploadOne(index) {
+  return new Promise((resolve) => {
+    const file = queue[index];
+    updateItem(index, "", "0%");
+    clearSpeed(index);
 
-  const file = queue[currentIndex];
-  updateItem(currentIndex, "", "Uploading");
-  setStatus(`Uploading ${currentIndex + 1} of ${queue.length}: ${file.name}`);
+    const xhr = new XMLHttpRequest();
+    const form = new FormData();
+    form.append("file", file, file.name);
 
-  const xhr = new XMLHttpRequest();
-  const form = new FormData();
-  form.append("file", file, file.name);
+    let lastLoaded = 0;
+    let lastAt = performance.now();
+    let startedAt = 0;
 
-  xhr.open("POST", "/api/upload");
+    xhr.open("POST", "/api/upload");
 
-  xhr.upload.addEventListener("progress", (e) => {
-    if (e.lengthComputable) {
+    xhr.upload.addEventListener("loadstart", () => {
+      startedAt = performance.now();
+      lastLoaded = 0;
+      lastAt = startedAt;
+    });
+
+    xhr.upload.addEventListener("progress", (e) => {
+      if (!e.lengthComputable) return;
+      const now = performance.now();
       const pct = Math.round((e.loaded / e.total) * 100);
-      setProgress(currentIndex, pct);
-      updateItem(currentIndex, "", `${pct}%`);
-    }
-  });
+      setProgress(index, pct);
 
-  xhr.addEventListener("load", () => {
-    if (xhr.status >= 200 && xhr.status < 300) {
-      setProgress(currentIndex, 100);
-      updateItem(currentIndex, "done", "Done");
-    } else {
-      setProgress(currentIndex, 0);
-      updateItem(currentIndex, "error", `Error ${xhr.status}`);
-    }
-    uploadNext(currentIndex + 1);
-  });
+      const dt = (now - lastAt) / 1000;
+      let instant = 0;
+      if (dt >= 0.2) {
+        instant = (e.loaded - lastLoaded) / dt;
+        lastLoaded = e.loaded;
+        lastAt = now;
+      }
 
-  xhr.addEventListener("error", () => {
-    setProgress(currentIndex, 0);
-    updateItem(currentIndex, "error", "Error");
-    uploadNext(currentIndex + 1);
-  });
+      const elapsed = (now - (startedAt || now)) / 1000;
+      const average = elapsed > 0 ? e.loaded / elapsed : 0;
+      const speed = instant > 0 ? instant : average;
 
-  xhr.send(form);
+      updateItem(index, "", `${pct}%`);
+      setSpeed(index, speed);
+    });
+
+    const done = (ok, label, state) => {
+      if (ok) {
+        setProgress(index, 100);
+        updateItem(index, "done", "Done");
+      } else {
+        setProgress(index, 0);
+        updateItem(index, state || "error", label);
+      }
+      clearSpeed(index);
+      resolve(ok);
+    };
+
+    xhr.addEventListener("load", () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        done(true);
+        return;
+      }
+      let detail = `Error ${xhr.status}`;
+      try {
+        const body = JSON.parse(xhr.responseText);
+        if (body?.error) detail = body.error;
+      } catch {
+        if (xhr.responseText) detail = xhr.responseText.slice(0, 120);
+      }
+      console.error("[upload failed]", file.name, xhr.status, xhr.responseText);
+      setStatus(`Failed: ${file.name} — ${detail}`);
+      done(false, detail);
+    });
+
+    xhr.addEventListener("error", () => {
+      console.error("[upload network error]", file.name);
+      setStatus(`Network error: ${file.name}`);
+      done(false, "Network error");
+    });
+
+    xhr.addEventListener("timeout", () => {
+      console.error("[upload timeout]", file.name);
+      setStatus(`Timeout: ${file.name}`);
+      done(false, "Timeout");
+    });
+
+    xhr.timeout = 0;
+    xhr.send(form);
+  });
+}
+
+async function uploadSequential() {
+  for (let i = 0; i < queue.length; i += 1) {
+    setStatus(`Uploading ${i + 1} of ${queue.length}: ${queue[i].name}`);
+    await uploadOne(i);
+  }
+  isUploading = false;
+  startBtn.disabled = false;
+  clearBtn.disabled = false;
+  simultaneousEl.disabled = false;
+  setStatus("All uploads completed.");
+}
+
+async function uploadSimultaneous() {
+  setStatus(`Uploading ${queue.length} file${queue.length > 1 ? "s" : ""} at once…`);
+  await Promise.all(queue.map((_, i) => uploadOne(i)));
+  isUploading = false;
+  startBtn.disabled = false;
+  clearBtn.disabled = false;
+  simultaneousEl.disabled = false;
+  setStatus("All uploads completed.");
 }
 
 startBtn.addEventListener("click", () => {
@@ -152,7 +246,13 @@ startBtn.addEventListener("click", () => {
   isUploading = true;
   startBtn.disabled = true;
   clearBtn.disabled = true;
-  uploadNext(0);
+  simultaneousEl.disabled = true;
+
+  if (simultaneousEl.checked) {
+    uploadSimultaneous();
+  } else {
+    uploadSequential();
+  }
 });
 
 clearBtn.addEventListener("click", () => {
@@ -170,8 +270,15 @@ fileInput.addEventListener("change", (e) => {
   fileInput.value = "";
 });
 
+browseBtn?.addEventListener("click", (e) => {
+  e.stopPropagation();
+  fileInput.click();
+});
+
 dropzone.addEventListener("click", (e) => {
-  if (e.target === startBtn || e.target === clearBtn) return;
+  if (e.target.closest("button") || e.target.closest("label") || e.target.closest("input")) {
+    return;
+  }
   fileInput.click();
 });
 

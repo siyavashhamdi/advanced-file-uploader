@@ -169,7 +169,32 @@ body {
 
 .queue-actions {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
+  justify-content: flex-end;
+}
+
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: 4px;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.check input {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.queue-actions .btn {
+  margin-top: 0;
 }
 
 .file-list {
@@ -183,11 +208,16 @@ body {
   display: grid;
   grid-template-columns: 1fr auto;
   align-items: center;
-  gap: 12px;
+  gap: 8px 12px;
   padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--panel-2);
+}
+
+.file-item .progress {
+  grid-column: 1 / -1;
+  margin-top: 0;
 }
 
 .file-meta {
@@ -212,8 +242,15 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-width: 110px;
+  min-width: 140px;
   justify-content: flex-end;
+}
+
+.speed {
+  font-size: 12px;
+  color: var(--accent);
+  font-family: "JetBrains Mono", monospace;
+  white-space: nowrap;
 }
 
 .status-pill {

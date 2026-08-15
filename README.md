@@ -29,7 +29,7 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). Uploaded files are stored in `uploads/` (created automatically). Max size is **100 MB** per file.
+Open [http://localhost:3000](http://localhost:3000). Uploaded files are stored in `uploads/` (created automatically). Max size is **10 GB** per file.
 
 Override the port with `PORT`:
 

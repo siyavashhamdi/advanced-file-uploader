@@ -18,7 +18,7 @@
       <header class="brand">
         <p class="logo">Advanced Uploader</p>
         <p class="tagline">
-          Pick multiple files — each uploads one by one with live progress.
+          Pick multiple files — sequential by default, optional simultaneous upload.
         </p>
       </header>
 
@@ -44,6 +44,10 @@
         <div class="queue-head">
           <h2>Upload queue</h2>
           <div class="queue-actions">
+            <label class="check" for="simultaneous">
+              <input type="checkbox" id="simultaneous" />
+              <span>Simultaneous upload</span>
+            </label>
             <button type="button" class="btn btn-ghost" id="clear-btn" disabled>
               Clear done
             </button>

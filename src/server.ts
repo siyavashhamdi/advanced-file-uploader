@@ -13,7 +13,16 @@ const publicDir = path.join(rootDir, "public");
 
 fs.mkdirSync(uploadsDir, { recursive: true });
 
-const MAX_FILE_SIZE = 100 * 1024 * 1024 * 1024; // 100 GB
+const MAX_FILE_SIZE = 10 * 1024 * 1024 * 1024; // 10 GB
+const MAX_FILE_SIZE_LABEL = "10 GB";
+
+function logError(context: string, err: unknown, extra?: Record<string, unknown>) {
+  const base =
+    err instanceof Error
+      ? { name: err.name, message: err.message, stack: err.stack }
+      : { err };
+  console.error(`[upload-error] ${context}`, { ...base, ...extra });
+}
 
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => {
@@ -51,28 +60,50 @@ app.get("/api/health", (_req, res) => {
  * request can report accurate XHR progress without multiplexing.
  */
 app.post("/api/upload", (req, res) => {
+  const startedAt = Date.now();
+  const contentLength = req.headers["content-length"];
+  console.log("[upload] start", {
+    contentLength,
+    contentType: req.headers["content-type"],
+    ip: req.ip,
+  });
+
   upload.single("file")(req, res, (err) => {
     if (err instanceof multer.MulterError) {
       const status = err.code === "LIMIT_FILE_SIZE" ? 413 : 400;
-      res.status(status).json({
-        ok: false,
-        error:
-          err.code === "LIMIT_FILE_SIZE"
-            ? `File exceeds ${MAX_FILE_SIZE / (1024 * 1024)} MB limit`
-            : err.message,
+      const message =
+        err.code === "LIMIT_FILE_SIZE"
+          ? `File exceeds ${MAX_FILE_SIZE_LABEL} limit`
+          : err.message;
+      logError("multer", err, {
+        code: err.code,
+        field: err.field,
+        contentLength,
+        status,
       });
+      res.status(status).json({ ok: false, error: message, code: err.code });
       return;
     }
 
     if (err) {
-      res.status(500).json({ ok: false, error: "Upload failed" });
+      logError("upload-handler", err, { contentLength });
+      const message = err instanceof Error ? err.message : "Upload failed";
+      res.status(500).json({ ok: false, error: message });
       return;
     }
 
     if (!req.file) {
+      console.error("[upload-error] no file in request", { contentLength });
       res.status(400).json({ ok: false, error: "No file provided" });
       return;
     }
+
+    console.log("[upload] ok", {
+      originalName: req.file.originalname,
+      storedName: req.file.filename,
+      size: req.file.size,
+      ms: Date.now() - startedAt,
+    });
 
     res.json({
       ok: true,
@@ -93,11 +124,13 @@ app.use(
     res: express.Response,
     _next: express.NextFunction,
   ) => {
-    console.error(err);
-    res.status(500).json({ ok: false, error: "Internal server error" });
+    logError("express", err);
+    const message = err instanceof Error ? err.message : "Internal server error";
+    res.status(500).json({ ok: false, error: message });
   },
 );
 
 app.listen(PORT, () => {
   console.log(`Uploader running at http://localhost:${PORT}`);
+  console.log(`Max file size: ${MAX_FILE_SIZE_LABEL}`);
 });
